@@ -1,34 +1,32 @@
-from flask import Flask, Response
+from flask import Flask, Response, stream_with_context
 import mpmath as mp
 import time
 
 app = Flask(__name__)
 
-def pi_stream():
-    digits = 10  # starting precision
+def generate_pi():
+    digits = 10
 
     while True:
         mp.mp.dps = digits
         pi_value = str(mp.pi)
 
-        yield f"π (precision {digits} digits): {pi_value}\n\n"
+        yield f"π ({digits} digits): {pi_value}\n"
+        yield "\n"  # forces chunk flush behavior in most proxies
 
         digits += 10
-        time.sleep(1)  # slows it so Render doesn't explode instantly 🤝
-
-
-@app.route("/")
-def home():
-    return """
-    <h1>🌀 Pi Stream Engine</h1>
-    <p>Visit <code>/pi</code> to watch π grow forever-ish.</p>
-    """
+        time.sleep(0.3)  # faster so it doesn’t feel dead
 
 
 @app.route("/pi")
 def pi():
-    return Response(pi_stream(), mimetype="text/plain")
-    
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no"
+    }
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    return Response(
+        stream_with_context(generate_pi()),
+        headers=headers,
+        mimetype="text/plain"
+    )
