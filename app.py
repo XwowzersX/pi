@@ -12,21 +12,19 @@ def generate_pi():
         pi_value = str(mp.pi)
 
         yield f"π ({digits} digits): {pi_value}\n"
-        yield "\n"  # forces chunk flush behavior in most proxies
+        yield "\n"
 
         digits += 10
-        time.sleep(0.3)  # faster so it doesn’t feel dead
+        time.sleep(0.3)
 
 
-@app.route("/pi")
+@app.route("/")
 def pi():
-    headers = {
-        "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no"
-    }
-
     return Response(
         stream_with_context(generate_pi()),
-        headers=headers,
-        mimetype="text/plain"
+        mimetype="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no"
+        }
     )
