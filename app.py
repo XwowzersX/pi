@@ -14,7 +14,7 @@ digits = 10
 started = False
 
 
-# 💾 load state
+# 💾 load saved state
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
@@ -25,7 +25,7 @@ def load_state():
     return {"digits": 10, "cache": []}
 
 
-# 💾 save state (best-effort)
+# 💾 save state (safe, non-fatal)
 def save_state():
     try:
         with open(STATE_FILE, "w") as f:
@@ -41,22 +41,28 @@ def save_state():
 def compute_pi():
     global digits, pi_cache
 
-    while True:
-        mp.mp.dps = digits
-        pi_value = str(mp.pi)
+    # 🚀 preload first value immediately
+    mp.mp.dps = digits
+    pi_cache.append(f"π ({digits} digits): {mp.pi}\n\n")
 
-        line = f"π ({digits} digits): {pi_value}\n\n"
-        pi_cache.append(line)
+    while True:
+        digits += 10
+        mp.mp.dps = digits
+
+        pi_value = str(mp.pi)
+        pi_cache.append(f"π ({digits} digits): {pi_value}\n\n")
 
         save_state()
-
-        digits += 10
         time.sleep(0.3)
 
 
-# 🌊 stream output
+# 🌊 streaming response (IMPORTANT: instant first byte)
 def stream_pi():
     i = 0
+
+    # ⚡ instant response so browser doesn't hang
+    yield "🌀 Pi stream online...\n\n"
+
     while True:
         if i < len(pi_cache):
             yield pi_cache[i]
@@ -66,31 +72,41 @@ def stream_pi():
 
 
 @app.route("/")
+def home():
+    return """
+    <h2>🌀 Pi Engine Online</h2>
+    <p>Go to <code>/pi</code> to watch infinity unfold.</p>
+    """
+
+
+@app.route("/pi")
 def pi():
     return Response(
         stream_with_context(stream_pi()),
         mimetype="text/plain",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no"
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive"
         }
     )
 
 
-# 🚀 startup initializer (IMPORTANT for Render/Gunicorn)
+# 🚀 IMPORTANT: run once per worker (Gunicorn-safe)
 def start_background():
-    global started
-    if not started:
-        started = True
+    global started, digits, pi_cache
 
-        state = load_state()
-        global digits, pi_cache
-        digits = state.get("digits", 10)
-        pi_cache = state.get("cache", [])
+    if started:
+        return
+    started = True
 
-        thread = threading.Thread(target=compute_pi, daemon=True)
-        thread.start()
+    state = load_state()
+    digits = state.get("digits", 10)
+    pi_cache = state.get("cache", [])
+
+    thread = threading.Thread(target=compute_pi, daemon=True)
+    thread.start()
 
 
-# Run on import (Gunicorn-safe)
+# 🧠 Runs on import (NOT __main__)
 start_background()
