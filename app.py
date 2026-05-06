@@ -4,14 +4,21 @@ import time
 
 app = Flask(__name__)
 
+# =========================
+# GLOBAL STATE
+# =========================
 digit_buffer = []
 digit_count = 0
 started = False
 
 
-# 🧠 Pi spigot generator (incremental, no recompute)
+# =========================
+# PI DIGIT GENERATOR
+# (spigot algorithm)
+# =========================
 def pi_digits():
     q, r, t, k, n, l = 1, 0, 1, 1, 3, 3
+
     while True:
         if 4*q + r - t < n*t:
             yield str(n)
@@ -34,7 +41,9 @@ def pi_digits():
             )
 
 
-# ⚙️ Background computation (FAST)
+# =========================
+# BACKGROUND WORKER
+# =========================
 def compute_pi():
     global digit_buffer, digit_count
 
@@ -46,27 +55,30 @@ def compute_pi():
     while True:
         chunk = []
 
-        # 🔥 large chunk = fewer sends = faster
+        # fast batch generation
         for _ in range(500):
             chunk.append(next(gen))
             digit_count += 1
 
         digit_buffer.append("".join(chunk))
 
-        # ⚡ tiny delay to avoid melting CPU
+        # small delay prevents CPU meltdown but stays fast
         time.sleep(0.05)
 
 
-# 🌊 Streaming endpoint (SSE + keepalive)
+# =========================
+# SSE STREAM (KEEPALIVE HEAVY)
+# =========================
 def stream_pi():
     i = 0
 
-    # ⚡ instant response (prevents loading delay)
-    yield "data: 🚀 π stream LIVE\n\n"
+    # instant response (critical for browser)
+    yield "data: 🚀 π stream online\n\n"
 
-    last_ping = time.time()
+    last_activity = time.time()
 
     while True:
+        # send new digits if available
         if i < len(digit_buffer):
             chunk = digit_buffer[i]
             i += 1
@@ -74,16 +86,20 @@ def stream_pi():
             yield f"data: {chunk}\n"
             yield f"data: Digits: {digit_count}\n\n"
 
-            last_ping = time.time()
+            last_activity = time.time()
+
         else:
-            # 💓 keepalive so browser never “hangs”
-            if time.time() - last_ping > 0.5:
-                yield "data: 💓\n\n"
-                last_ping = time.time()
+            # 💓 constant heartbeat to prevent Render thinking it's idle
+            if time.time() - last_activity > 0.2:
+                yield "data: .\n\n"
+                last_activity = time.time()
 
             time.sleep(0.01)
 
 
+# =========================
+# ROUTES
+# =========================
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -102,7 +118,9 @@ def pi():
     )
 
 
-# 🚀 Start background thread ONCE
+# =========================
+# START BACKGROUND THREAD
+# =========================
 def start_background():
     global started
     if started:
@@ -115,5 +133,9 @@ def start_background():
 
 start_background()
 
+
+# =========================
+# LOCAL RUN
+# =========================
 if __name__ == "__main__":
     app.run(threaded=True)
