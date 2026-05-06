@@ -1,19 +1,15 @@
 from flask import Flask, Response, stream_with_context, render_template
 import threading
 import time
-import json
-import os
 
 app = Flask(__name__)
-
-STATE_FILE = "pi_state.json"
 
 digit_buffer = []
 digit_count = 0
 started = False
 
 
-# 🧠 Pi digit generator (spigot algorithm)
+# 🧠 Pi spigot generator (true incremental)
 def pi_digits():
     q, r, t, k, n, l = 1, 0, 1, 1, 3, 3
     while True:
@@ -38,73 +34,54 @@ def pi_digits():
             )
 
 
-# 💾 load state
-def load_state():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r") as f:
-                return json.load(f)
-        except:
-            pass
-    return {"count": 0}
-
-
-# 💾 save state
-def save_state():
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump({"count": digit_count}, f)
-    except:
-        pass
-
-
-# ⚙️ background generator
+# ⚙️ Background computation
 def compute_pi():
     global digit_buffer, digit_count
 
     gen = pi_digits()
 
     # First digit
-    first = next(gen)  # "3"
+    first = next(gen)
     digit_buffer.append(first + ".")
-
-    # Skip already computed digits if restarting
-    state = load_state()
-    skip = state.get("count", 0)
-
-    for _ in range(skip):
-        next(gen)
-
-    digit_count = skip
 
     while True:
         chunk = ""
-        for _ in range(50):  # digits per update
-            d = next(gen)
-            chunk += d
+        for _ in range(25):  # smaller chunks = smoother stream
+            chunk += next(gen)
             digit_count += 1
 
         digit_buffer.append(chunk)
-
-        save_state()
-        time.sleep(1)  # controls speed
+        time.sleep(1)
 
 
-# 🌊 streaming (SSE)
+# 🌊 Streaming with KEEPALIVE
 def stream_pi():
     i = 0
 
-    yield "data: 🌀 Pi stream online...\n\n"
+    # ⚡ immediate response (prevents long loading)
+    yield "data: 🟢 connected to π stream\n\n"
+
+    last_sent = time.time()
 
     while True:
+        sent_data = False
+
         if i < len(digit_buffer):
             chunk = digit_buffer[i]
             i += 1
 
             yield f"data: {chunk}\n"
             yield f"data: Digits: {digit_count}\n\n"
-        else:
-            time.sleep(0.1)
+
+            sent_data = True
+            last_sent = time.time()
+
+        # 💓 keepalive every 1 second if nothing new
+        if not sent_data and time.time() - last_sent > 1:
+            yield "data: 💓 keepalive\n\n"
+            last_sent = time.time()
+
+        time.sleep(0.1)
 
 
 @app.route("/")
