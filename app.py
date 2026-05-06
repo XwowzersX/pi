@@ -11,9 +11,10 @@ STATE_FILE = "pi_state.json"
 
 pi_cache = []
 digits = 10
+started = False
 
 
-# 💾 load saved state
+# 💾 load state
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
@@ -24,18 +25,21 @@ def load_state():
     return {"digits": 10, "cache": []}
 
 
-# 💾 save state
+# 💾 save state (best-effort)
 def save_state():
-    with open(STATE_FILE, "w") as f:
-        json.dump({
-            "digits": digits,
-            "cache": pi_cache[-50:]  # keep last 50 lines
-        }, f)
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump({
+                "digits": digits,
+                "cache": pi_cache[-50:]
+            }, f)
+    except:
+        pass
 
 
 # ⚙️ background Pi generator
 def compute_pi():
-    global digits
+    global digits, pi_cache
 
     while True:
         mp.mp.dps = digits
@@ -50,7 +54,7 @@ def compute_pi():
         time.sleep(0.3)
 
 
-# 🌊 fast stream (no computation here!)
+# 🌊 stream output
 def stream_pi():
     i = 0
     while True:
@@ -73,14 +77,20 @@ def pi():
     )
 
 
-if __name__ == "__main__":
-    # 🔁 restore saved state
-    state = load_state()
-    digits = state.get("digits", 10)
-    pi_cache = state.get("cache", [])
+# 🚀 startup initializer (IMPORTANT for Render/Gunicorn)
+def start_background():
+    global started
+    if not started:
+        started = True
 
-    # 🚀 start background worker
-    thread = threading.Thread(target=compute_pi, daemon=True)
-    thread.start()
+        state = load_state()
+        global digits, pi_cache
+        digits = state.get("digits", 10)
+        pi_cache = state.get("cache", [])
 
-    app.run(host="0.0.0.0", port=5000)
+        thread = threading.Thread(target=compute_pi, daemon=True)
+        thread.start()
+
+
+# Run on import (Gunicorn-safe)
+start_background()
