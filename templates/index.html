@@ -35,6 +35,8 @@ const es = new EventSource("/pi");
 es.onmessage = (e) => {
     if (e.data.startsWith("Digits:")) {
         counter.textContent = e.data;
+    } else if (e.data.includes("keepalive")) {
+        // ignore keepalive visually (optional)
     } else {
         output.textContent += e.data;
         window.scrollTo(0, document.body.scrollHeight);
