@@ -79,7 +79,7 @@ def home():
     """
 
 
-@app.route("/")
+@app.route("/pi")
 def pi():
     return Response(
         stream_with_context(stream_pi()),
