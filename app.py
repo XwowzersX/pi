@@ -1,5 +1,4 @@
-from flask import Flask, Response, stream_with_context
-import mpmath as mp
+from flask import Flask, Response, stream_with_context, render_template
 import threading
 import time
 import json
@@ -9,12 +8,37 @@ app = Flask(__name__)
 
 STATE_FILE = "pi_state.json"
 
-pi_cache = []
-digits = 10
+digit_buffer = []
+digit_count = 0
 started = False
 
 
-# 💾 load saved state
+# 🧠 Pi digit generator (spigot algorithm)
+def pi_digits():
+    q, r, t, k, n, l = 1, 0, 1, 1, 3, 3
+    while True:
+        if 4*q + r - t < n*t:
+            yield str(n)
+            q, r, t, k, n, l = (
+                10*q,
+                10*(r - n*t),
+                t,
+                k,
+                ((10*(3*q + r)) // t) - 10*n,
+                l
+            )
+        else:
+            q, r, t, k, n, l = (
+                q*k,
+                (2*q + r)*l,
+                t*l,
+                k + 1,
+                (q*(7*k) + 2 + r*l) // (t*l),
+                l + 2
+            )
+
+
+# 💾 load state
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
@@ -22,68 +46,77 @@ def load_state():
                 return json.load(f)
         except:
             pass
-    return {"digits": 10, "cache": []}
+    return {"count": 0}
 
 
-# 💾 save state (safe, non-fatal)
+# 💾 save state
 def save_state():
     try:
         with open(STATE_FILE, "w") as f:
-            json.dump({
-                "digits": digits,
-                "cache": pi_cache[-50:]
-            }, f)
+            json.dump({"count": digit_count}, f)
     except:
         pass
 
 
-# ⚙️ background Pi generator
+# ⚙️ background generator
 def compute_pi():
-    global digits, pi_cache
+    global digit_buffer, digit_count
 
-    # 🚀 preload first value immediately
-    mp.mp.dps = digits
-    pi_cache.append(f"π ({digits} digits): {mp.pi}\n\n")
+    gen = pi_digits()
+
+    # First digit
+    first = next(gen)  # "3"
+    digit_buffer.append(first + ".")
+
+    # Skip already computed digits if restarting
+    state = load_state()
+    skip = state.get("count", 0)
+
+    for _ in range(skip):
+        next(gen)
+
+    digit_count = skip
 
     while True:
-        digits += 10
-        mp.mp.dps = digits
+        chunk = ""
+        for _ in range(50):  # digits per update
+            d = next(gen)
+            chunk += d
+            digit_count += 1
 
-        pi_value = str(mp.pi)
-        pi_cache.append(f"π ({digits} digits): {pi_value}\n\n")
+        digit_buffer.append(chunk)
 
         save_state()
-        time.sleep(0.3)
+        time.sleep(1)  # controls speed
 
 
-# 🌊 streaming response (IMPORTANT: instant first byte)
+# 🌊 streaming (SSE)
 def stream_pi():
     i = 0
 
-    # ⚡ instant response so browser doesn't hang
-    yield "🌀 Pi stream online...\n\n"
+    yield "data: 🌀 Pi stream online...\n\n"
 
     while True:
-        if i < len(pi_cache):
-            yield pi_cache[i]
+        if i < len(digit_buffer):
+            chunk = digit_buffer[i]
             i += 1
+
+            yield f"data: {chunk}\n"
+            yield f"data: Digits: {digit_count}\n\n"
         else:
             time.sleep(0.1)
 
 
 @app.route("/")
 def home():
-    return """
-    <h2>🌀 Pi Engine Online</h2>
-    <p>Go to <code>/pi</code> to watch infinity unfold.</p>
-    """
+    return render_template("index.html")
 
 
 @app.route("/pi")
 def pi():
     return Response(
         stream_with_context(stream_pi()),
-        mimetype="text/plain",
+        mimetype="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
@@ -92,21 +125,18 @@ def pi():
     )
 
 
-# 🚀 IMPORTANT: run once per worker (Gunicorn-safe)
+# 🚀 start background thread once
 def start_background():
-    global started, digits, pi_cache
-
+    global started
     if started:
         return
     started = True
-
-    state = load_state()
-    digits = state.get("digits", 10)
-    pi_cache = state.get("cache", [])
 
     thread = threading.Thread(target=compute_pi, daemon=True)
     thread.start()
 
 
-# 🧠 Runs on import (NOT __main__)
 start_background()
+
+if __name__ == "__main__":
+    app.run(threaded=True)
