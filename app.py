@@ -1,147 +1,85 @@
-from flask import Flask, render_template, jsonify
-import threading
-import time
+from flask import Flask, Response, jsonify
 import os
-import requests
+from mpmath import mp
 
 app = Flask(__name__)
 
-# =========================
-# CONFIG (Render env vars)
-# =========================
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+PI_FILE = "pi.txt"
+CHUNK_SIZE = 10
 
-HEADERS = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json"
+# how many digits we already generated
+state = {
+    "digits_done": 0,
+    "pi": "3"
 }
 
-# =========================
-# STATE
-# =========================
-pi_digits = "3."
-lock = threading.Lock()
-
-SAVE_ID = 1
-
-# =========================
-# LOAD FROM SUPABASE
-# =========================
-def load_pi():
-    global pi_digits
-
-    try:
-        r = requests.get(
-            f"{SUPABASE_URL}/rest/v1/pi_save?id=eq.{SAVE_ID}",
-            headers=HEADERS,
-            timeout=5
-        )
-
-        data = r.json()
-
-        if data and len(data) > 0:
-            loaded = data[0]["digits"]
-            if loaded:
-                with lock:
-                    pi_digits = loaded
-                print(f"[LOAD] {len(loaded)} digits")
-
-    except Exception as e:
-        print("[LOAD ERROR]", e)
+# load saved state if exists
+if os.path.exists(PI_FILE):
+    with open(PI_FILE, "r") as f:
+        data = f.read().strip()
+        if data:
+            state["pi"] = data
+            # minus "3."
+            state["digits_done"] = max(0, len(data) - 2)
 
 
-# =========================
-# SAVE TO SUPABASE
-# =========================
-def save_pi():
-    try:
-        with lock:
-            data = pi_digits
-
-        requests.patch(
-            f"{SUPABASE_URL}/rest/v1/pi_save?id=eq.{SAVE_ID}",
-            headers=HEADERS,
-            json={"digits": data},
-            timeout=5
-        )
-
-        print(f"[SAVE] {len(data)} digits")
-
-    except Exception as e:
-        print("[SAVE ERROR]", e)
+def save():
+    # simple safe write (NO recursion, NO endpoints called here)
+    with open(PI_FILE, "w") as f:
+        f.write(state["pi"])
 
 
-# =========================
-# FAST "FAKE BUT STABLE" PI STREAM
-# (10 digits per tick)
-# =========================
+def generate_more_digits():
+    """
+    Generates next 10 digits and appends them.
+    Uses mpmath with increasing precision.
+    """
+    next_target = state["digits_done"] + CHUNK_SIZE
 
-# This is a deterministic digit stream generator (not full mpmath recompute)
-# It just simulates stable growing digits safely.
+    # set precision high enough (extra buffer avoids rounding issues)
+    mp.dps = next_target + 20
 
-import random
+    pi_str = str(mp.pi)
 
-def generate_10_digits():
-    return "".join(str(random.randint(0, 9)) for _ in range(10))
+    # ensure format like "3.1415..."
+    if not pi_str.startswith("3."):
+        pi_str = "3." + pi_str.split(".")[1]
 
+    # slice up to new target
+    needed_length = 2 + next_target  # "3." + digits
+    trimmed = pi_str[:needed_length]
 
-def worker():
-    global pi_digits
+    state["pi"] = trimmed
+    state["digits_done"] = next_target
 
-    while True:
-        new_block = generate_10_digits()
-
-        with lock:
-            pi_digits += new_block
-
-        time.sleep(0.03)  # fast but not CPU explosion
-
-
-# =========================
-# STARTUP
-# =========================
-load_pi()
-threading.Thread(target=worker, daemon=True).start()
+    save()
 
 
-# =========================
-# ROUTES
-# =========================
 @app.route("/")
 def home():
-    return render_template("index.html")
+    return """
+    <h1>🌀 Pi Engine</h1>
+    <p>Go to <code>/pi</code> to see progress</p>
+    """
 
 
 @app.route("/pi")
-def get_pi():
-    with lock:
-        return jsonify({
-            "pi": pi_digits,
-            "digits": len(pi_digits)
-        })
+def pi():
+    # IMPORTANT: only generate if needed
+    # prevents request spam from causing infinite compute loops
+    if state["digits_done"] < 1000:  # safety cap so Render doesn't melt
+        generate_more_digits()
+
+    return Response(state["pi"], mimetype="text/plain")
 
 
-@app.route("/save", methods=["POST"])
-def save_route():
-    save_pi()
-    return jsonify({"status": "saved"})
+@app.route("/reset")
+def reset():
+    state["digits_done"] = 0
+    state["pi"] = "3"
+    save()
+    return jsonify({"status": "reset"})
 
 
-@app.route("/read")
-def read_route():
-    load_pi()
-    with lock:
-        return jsonify({
-            "status": "loaded",
-            "pi": pi_digits,
-            "digits": len(pi_digits)
-        })
-
-
-# =========================
-# RUN
-# =========================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
