@@ -2,3 +2,4 @@ flask
 mpmath
 gunicorn
 gevent
+requests
