@@ -1,141 +1,72 @@
-from flask import Flask, Response, stream_with_context, render_template
+from flask import Flask, render_template, jsonify, request
 import threading
 import time
+import os
+import mpmath as mp
 
 app = Flask(__name__)
 
-# =========================
-# GLOBAL STATE
-# =========================
-digit_buffer = []
-digit_count = 0
-started = False
+# INSANE precision pool
+mp.mp.dps = 1000000
+
+# Render persistent disk location
+SAVE_FILE = "/data/save.txt"
+
+# Fallback for local running
+if not os.path.exists("/data"):
+    SAVE_FILE = "save.txt"
+
+pi_digits = "3."
+current_digits = 2
+lock = threading.Lock()
 
 
-# =========================
-# PI DIGIT GENERATOR
-# (spigot algorithm)
-# =========================
-def pi_digits():
-    q, r, t, k, n, l = 1, 0, 1, 1, 3, 3
+def load_saved_pi():
+    global pi_digits
+    global current_digits
 
-    while True:
-        if 4*q + r - t < n*t:
-            yield str(n)
-            q, r, t, k, n, l = (
-                10*q,
-                10*(r - n*t),
-                t,
-                k,
-                ((10*(3*q + r)) // t) - 10*n,
-                l
-            )
-        else:
-            q, r, t, k, n, l = (
-                q*k,
-                (2*q + r)*l,
-                t*l,
-                k + 1,
-                (q*(7*k) + 2 + r*l) // (t*l),
-                l + 2
-            )
+    try:
+        with open(SAVE_FILE, "r") as f:
+            data = f.read().strip()
+
+        if data:
+            pi_digits = data
+            current_digits = len(data)
+            print(f"Loaded {current_digits} digits from save")
+
+    except:
+        print("No save file found, starting fresh")
 
 
-# =========================
-# BACKGROUND WORKER
-# =========================
-def compute_pi():
-    global digit_buffer, digit_count
+load_saved_pi()
 
-    gen = pi_digits()
 
-    # first digit
-    digit_buffer.append(next(gen) + ".")
+# FAST chunk generator
+# Generates larger and larger slices continuously
+
+def pi_worker():
+    global pi_digits
+    global current_digits
+
+    chunk_size = 2500
 
     while True:
-        chunk = []
+        try:
+            target = current_digits + chunk_size
 
-        # fast batch generation
-        for _ in range(500):
-            chunk.append(next(gen))
-            digit_count += 1
+            # Generate larger slice
+            new_pi = str(mp.pi)[:target]
 
-        digit_buffer.append("".join(chunk))
+            with lock:
+                pi_digits = new_pi
+                current_digits = len(new_pi)
 
-        # small delay prevents CPU meltdown but stays fast
-        time.sleep(0.05)
+            # Tiny sleep keeps CPU from exploding into plasma
+            time.sleep(0.005)
 
-
-# =========================
-# SSE STREAM (KEEPALIVE HEAVY)
-# =========================
-def stream_pi():
-    i = 0
-
-    # instant response (critical for browser)
-    yield "data: 🚀 π stream online\n\n"
-
-    last_activity = time.time()
-
-    while True:
-        # send new digits if available
-        if i < len(digit_buffer):
-            chunk = digit_buffer[i]
-            i += 1
-
-            yield f"data: {chunk}\n"
-            yield f"data: Digits: {digit_count}\n\n"
-
-            last_activity = time.time()
-
-        else:
-            # 💓 constant heartbeat to prevent Render thinking it's idle
-            if time.time() - last_activity > 0.2:
-                yield "data: .\n\n"
-                last_activity = time.time()
-
-            time.sleep(0.01)
+        except Exception as e:
+            print(e)
+            time.sleep(1)
 
 
-# =========================
-# ROUTES
-# =========================
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-
-@app.route("/pi")
-def pi():
-    return Response(
-        stream_with_context(stream_pi()),
-        mimetype="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive"
-        }
-    )
-
-
-# =========================
-# START BACKGROUND THREAD
-# =========================
-def start_background():
-    global started
-    if started:
-        return
-    started = True
-
-    thread = threading.Thread(target=compute_pi, daemon=True)
-    thread.start()
-
-
-start_background()
-
-
-# =========================
-# LOCAL RUN
-# =========================
-if __name__ == "__main__":
-    app.run(threaded=True)
+    app.run(host="0.0.0.0", port=5000)
