@@ -1,47 +1,65 @@
 <!DOCTYPE html>
-<html>
-<head>
-    <title>π Live Stream</title>
-    <style>
-        body {
-            background: black;
-            color: lime;
-            font-family: monospace;
-            margin: 0;
-            padding: 10px;
-        }
-        #counter {
-            position: fixed;
-            top: 0;
-            right: 0;
-            background: #111;
-            padding: 5px 10px;
-            border-left: 1px solid lime;
-            border-bottom: 1px solid lime;
-        }
-    </style>
-</head>
-<body>
+<div id="bg"></div>
 
-<div id="counter">Digits: 0</div>
-<pre id="output"></pre>
+<div class="container">
+    <div class="title">∞ PI REACTOR ∞</div>
+
+    <div class="counter">
+        Digits Generated: <span id="digits" class="glow">0</span>
+    </div>
+
+    <div class="buttons">
+        <button onclick="savePi()">SAVE</button>
+        <button onclick="readPi()">READ</button>
+    </div>
+
+    <div id="pi">Loading π...</div>
+</div>
 
 <script>
-const output = document.getElementById("output");
-const counter = document.getElementById("counter");
+const piDiv = document.getElementById("pi");
+const digitsDiv = document.getElementById("digits");
 
-const es = new EventSource("/pi");
+async function updatePi() {
+    try {
+        const res = await fetch('/pi');
+        const data = await res.json();
 
-es.onmessage = (e) => {
-    if (e.data.startsWith("Digits:")) {
-        counter.textContent = e.data;
-    } else if (e.data.includes("keepalive")) {
-        // ignore keepalive visually (optional)
-    } else {
-        output.textContent += e.data;
-        window.scrollTo(0, document.body.scrollHeight);
+        piDiv.textContent = data.pi;
+        digitsDiv.textContent = data.digits;
+
+        piDiv.scrollTop = piDiv.scrollHeight;
+    } catch (e) {
+        console.log(e);
     }
-};
+}
+
+async function savePi() {
+    const res = await fetch('/save', {
+        method: 'POST'
+    });
+
+    const data = await res.json();
+
+    alert(`Saved ${data.digits} digits into save.txt`);
+}
+
+async function readPi() {
+    const res = await fetch('/read');
+    const data = await res.json();
+
+    if (data.status === 'loaded') {
+        piDiv.textContent = data.pi;
+        digitsDiv.textContent = data.digits;
+
+        alert(`Loaded ${data.digits} digits from save.txt`);
+    } else {
+        alert('No save file found');
+    }
+}
+
+setInterval(updatePi, 100);
+updatePi();
 </script>
 
 </body>
